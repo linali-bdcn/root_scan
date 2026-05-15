@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁盘空间智能分析专家 Pro</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <div class="sidebar">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>💽 空间分析专家</h2>
+            <button class="btn-icon" onclick="document.getElementById('modalSettings').style.display='flex'" title="打开设置">⚙️</button>
+        </div>
+
+        <div class="control-group">
+            <label>目标盘符 / 路径</label>
+            <select id="driveSelect"></select>
+        </div>
+        <div class="control-group" style="display: flex; flex-direction: row; gap: 10px;">
+            <div style="flex: 1;">
+                <label style="font-size: 11px;">渲染深度</label>
+                <input type="number" id="renderDepth" value="3" min="1" max="8" style="width: 100%;">
+            </div>
+            <div style="flex: 1;">
+                <label style="font-size: 11px;">过滤碎文件(MB)</label>
+                <input type="number" id="scanThreshold" value="10" min="0" style="width: 100%;" title="设为 0 可扫描出所有最细微的文件">
+            </div>
+        </div>
+
+        <button id="scanBtn">🚀 开始深度扫描</button>
+        <div id="statusText" class="status-text">准备就绪。</div>
+
+        <div class="control-group" style="margin-top: 10px;">
+            <button class="btn-action" id="btnFilterStats" style="background: var(--border-color);">🔍 高级筛选与统计</button>
+        </div>
+
+        <div style="flex: 1;"></div>
+
+        <div class="control-group" id="batchActions" style="opacity: 0.5; pointer-events: none;">
+            <label>批量操作 (针对选中项)</label>
+            <div class="action-grid">
+                <button class="btn-danger" id="btnDelete">🗑️ 物理删除</button>
+                <button class="btn-action" id="btnCompress">📦 打包压缩</button>
+                <button class="btn-action" id="btnMove">🚚 批量转移</button>
+            </div>
+            <button class="btn-export" id="btnExport">📤 导出高级清单</button>
+        </div>
+    </div>
+
+    <div class="mid-panel">
+        <div class="panel-header">
+            <span>🌲 目录结构</span>
+            <div style="text-align: right;">
+                <div id="selectCount" class="select-count">未选择</div>
+                <div id="selectSize" style="font-size: 11px; color: var(--danger-color); font-weight: bold;">0 B</div>
+            </div>
+        </div>
+        <div class="tree-container" id="treeContainer" tabindex="0"></div>
+    </div>
+
+    <div class="main-panel">
+        <div class="loading-overlay" id="loadingOverlay">🚀 引擎全开...</div>
+        <div id="plotly-view"></div>
+    </div>
+
+    <div class="modal-overlay" id="modalProgress">
+        <div class="modal-content" style="height: auto; max-width: 500px;">
+            <div class="modal-header"><h3 id="progressTitle">任务执行中...</h3></div>
+            <div class="modal-body" style="padding: 20px;">
+                <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+                <div id="progressText" style="margin-top: 10px; font-size: 12px; color: var(--text-muted); word-break: break-all;">准备中...</div>
+                <button id="btnCancelJob" class="btn-danger" style="width: 100%; margin-top: 20px;">⏹️ 紧急停止</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 修复后的 筛选与统计弹窗 -->
+    <div class="modal-overlay" id="modalFilter">
+        <!-- 这里限制了弹窗总高度，并采用 overflow: hidden 防止越界 -->
+        <div class="modal-content" style="max-width: 1100px; width: 90%; height: 85vh; flex-direction: row; overflow: hidden; display: flex;">
+
+            <!-- 左半部分：规则设置与统计面板 (固定宽度，左侧独立滚动) -->
+            <div style="width: 450px; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; background: var(--bg-color); flex-shrink: 0; overflow-y: auto;">
+                <div class="modal-header" style="position: sticky; top: 0; z-index: 10;">
+                    <h3>🔍 筛选与统计</h3>
+                </div>
+                <div class="modal-body" style="padding: 15px; display: flex; flex-direction: column; gap: 15px; overflow: visible;">
+
+                    <div style="background: var(--panel-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color);">
+                        <h4 style="margin-bottom: 10px; color: var(--accent-color);">1. 设定匹配规则</h4>
+                        <div class="control-group" style="gap: 12px;">
+                            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-main); font-weight: normal;">
+                                <input type="checkbox" id="cbRuleName"> 文件/文件夹名包含:
+                                <input type="text" id="ruleName" placeholder="例如: 录屏" style="flex:1; padding: 5px;">
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-main); font-weight: normal;">
+                                <input type="checkbox" id="cbRuleRegex"> 进阶正则匹配:
+                                <input type="text" id="ruleRegex" placeholder="例如: ^\d{4}-.*\.mp4$" style="flex:1; padding: 5px;">
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-main); font-weight: normal;">
+                                <input type="checkbox" id="cbRuleExt"> 扩展名包含:
+                                <input type="text" id="ruleExt" placeholder="例如: mp4, avi, mkv" style="flex:1; padding: 5px;">
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; color: var(--text-main); font-weight: normal;">
+                                <input type="checkbox" id="cbRuleSize"> 单文件大小范围:
+                                <input type="number" id="ruleMinSize" placeholder="Min" style="width:70px; padding: 5px;">
+                                <span>~</span>
+                                <input type="number" id="ruleMaxSize" placeholder="Max" style="width:70px; padding: 5px;"> MB
+                            </label>
+                        </div>
+                        <button id="btnRunMatch" class="btn-action" style="width: 100%; margin-top: 15px;">🔍 在全局查找匹配项</button>
+                    </div>
+
+                    <div style="background: var(--panel-bg); padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); flex: 1; display: flex; flex-direction: column;">
+                        <h4 style="margin-bottom: 10px; color: var(--hover-color);">2. 数据统计分析</h4>
+                        <div style="margin-bottom: 10px;">
+                            <label style="font-size: 12px; color: var(--text-muted);">统计目标:</label>
+                            <select id="statsTarget" style="width: 100%; padding: 5px; margin-top: 5px;">
+                                <option value="main_selected">📊 主视图中已经被勾选的文件</option>
+                                <option value="list_checked">📋 右侧筛选列表中被打钩的文件</option>
+                                <option value="all">🌍 全局所有文件 (含未勾选)</option>
+                            </select>
+                        </div>
+                        <div style="font-size: 12px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 5px;">
+                            <label><input type="checkbox" id="statOptCount" checked> 统计文件总数与总大小</label>
+                            <label><input type="checkbox" id="statOptAvg" checked> 计算平均单文件大小</label>
+                            <label><input type="checkbox" id="statOptTopExt" checked> 分析文件类型占比 Top 10</label>
+                        </div>
+                        <button id="btnCalcStats" class="btn-export" style="width: 100%; margin-bottom: 10px;">📊 生成统计报告</button>
+                        <pre id="statsResult" style="flex: 1; background: #000; color: #0f0; padding: 10px; border-radius: 4px; overflow: auto; font-size: 12px; margin: 0; min-height: 150px;">等待执行...</pre>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- 右半部分：匹配结果列表 (右侧独立滚动) -->
+            <div style="flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); position: relative;">
+
+                <!-- 🌟 永远固定在顶部的表头 -->
+                <div class="modal-header" style="flex-shrink: 0; background: var(--bg-color);">
+                    <h3>📋 匹配结果清单</h3>
+                    <button class="close-btn" onclick="document.getElementById('modalFilter').style.display='none'">✖</button>
+                </div>
+
+                <!-- 🌟 永远固定在次顶部的工具栏 -->
+                <div style="padding: 10px; background: var(--bg-color); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+                    <div style="font-size: 13px;">
+                        <label style="cursor: pointer;"><input type="checkbox" id="cbListSelectAll"> 全选/取消全选</label>
+                        <span id="matchListCount" style="margin-left: 15px; color: var(--accent-color);">共 0 项</span>
+                    </div>
+                    <button id="btnSyncToMain" class="btn-action" style="padding: 5px 15px; background: var(--accent-color);">✔️ 将打钩项完美同步至主视图</button>
+                </div>
+
+                <!-- 🌟 只有这个列表框允许滚动 -->
+                <div class="modal-body" style="padding: 0; background: var(--panel-bg); flex: 1; overflow-y: auto;">
+                    <div id="matchListContainer" style="padding: 10px;">
+                        <div style="text-align: center; color: var(--text-muted); margin-top: 50px;">设定左侧规则并点击“查找匹配项”...</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- 文本报告导出弹窗 -->
+    <div class="modal-overlay" id="modalText">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTextTitle">详细信息</h3>
+                <div>
+                    <button class="btn-action" id="btnSaveLocal" style="margin-right: 15px; padding: 5px 10px;">💾 另存至本地文件</button>
+                    <button class="close-btn" onclick="document.getElementById('modalText').style.display='none'">✖</button>
+                </div>
+            </div>
+            <div class="modal-body"><pre id="modalTextPre"></pre></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="modalInput"><div class="modal-content" style="height: auto; max-width: 500px;"><div class="modal-header"><h3 id="modalInputTitle">输入路径</h3><button class="close-btn" onclick="document.getElementById('modalInput').style.display='none'">✖</button></div><div class="modal-body" style="padding: 20px;"><input type="text" id="modalInputVal" style="width: 100%;"><button id="modalInputConfirm" style="width: 100%; margin-top: 15px;">确认执行</button></div></div></div>
+
+    <div class="modal-overlay" id="modalSettings"><div class="modal-content" style="max-width: 600px; height: auto;"><div class="modal-header"><h3>⚙️ 设置中心</h3><button class="close-btn" onclick="document.getElementById('modalSettings').style.display='none'">✖</button></div><div class="modal-body" style="padding: 20px;"><div class="setting-item"><label>🎨 UI 主题更换</label><select id="themeSelect"><option value="Ocean">深海蓝 (Ocean)</option><option value="Slate">高级灰 (Slate)</option><option value="Sunset">日落橘 (Sunset)</option><option value="Neon">赛博紫 (Neon)</option></select></div><div class="setting-item"><label>💾 默认导出 JSON 目录</label><input type="text" id="exportPathInput" placeholder="例如: D:\SpaceAnalyzer_Exports" style="width: 100%;"></div><hr style="border: 0; border-top: 1px solid var(--border-color); margin: 20px 0;"><p style="font-size:12px; color:var(--text-muted); line-height:2;"><b>💡 极客操作指南:</b><br><b>Ctrl + 左键</b>：直接在系统中打开该文件/文件夹。<br><b>Ctrl + 右键</b>：快速勾选/取消勾选。<br><b>上下左右</b>：移动焦点并折叠/展开目录。<br><b>Enter / 鼠标单击</b>：展开子集并自动重绘右侧图表。<br><b>空格键</b>：勾选当前焦点项。</p></div></div></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
